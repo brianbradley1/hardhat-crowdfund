@@ -1,9 +1,0 @@
-node_modules
-.env
-ProjectNotes.txt
-.next
-ethereum/build
-ethereum/build/Campaign.json
-ethereum/build/CampaignFactory.json
-DeployedContractAddress
-.vscode
