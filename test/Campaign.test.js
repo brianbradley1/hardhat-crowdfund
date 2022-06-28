@@ -1,267 +1,260 @@
-const assert = require("assert");
-const ganache = require("ganache-cli");
-const Web3 = require("web3");
-const web3 = new Web3(ganache.provider());
+const { assert, expect } = require("chai");
+const { getNamedAccounts, deployments, ethers, network } = require("hardhat");
+const { abi: campaignAbi } = require("../artifacts/contracts/Campaign.sol/Campaign.json");
 
-const { abi, evm } = require("../ethereum/build/CampaignFactory.json");
-const campaignContract = require("../ethereum/build/Campaign.json");
+let factory, campaignAddress, campaign, deployer, user1, user2;
 
-let accounts;
-let factory;
-let campaignAddress;
-let campaign;
+describe("Campaign Unit Test", function () {
+  beforeEach(async () => {
+    const { deploy } = deployments;
+    const accounts = await getNamedAccounts();
+    deployer = accounts.deployer;
+    user1 = accounts.user1;
+    user2 = accounts.user2;
 
-beforeEach(async () => {
-  accounts = await web3.eth.getAccounts();
+    // deploy factory contract
+    await deployments.fixture(["campaignFactory"]);
+    factory = await ethers.getContract("CampaignFactory", deployer);
 
-  // compiledFactory.interface = contract abi
-  factory = await new web3.eth.Contract(abi)
-    .deploy({ data: evm.bytecode.object })
-    .send({ from: accounts[0], gas: "2000000" });
+    const minimumFee = ethers.utils.parseEther("100");
+    // create first campaign for testing
+    await factory.createCampaign(minimumFee);
+    [campaignAddress] = await factory.getDeployedCampaigns();
 
-  await factory.methods.createCampaign("100").send({
-    from: accounts[0],
-    gas: "1000000",
+    campaign = new ethers.Contract(campaignAddress, campaignAbi);
   });
 
-  //es6 syntax - destructuring array
-  //take first element out of array and assign to campaignAddress variable
-  [campaignAddress] = await factory.methods.getDeployedCampaigns().call();
-
-  campaign = await new web3.eth.Contract(
-    campaignContract.abi,
-    campaignAddress
-  );
-});
-
-describe("Campaigns", () => {
-  it("deploys a factory and a campaign", () => {
-    assert.ok(factory.options.address);
-    assert.ok(campaign.options.address);
-  });
-
-  it("marks caller as the campaign manager", async () => {
-    const manager = await campaign.methods.manager().call();
-    assert.equal(accounts[0], manager);
-  });
-
-  it("allows people to contribute money and marks them as approvers", async () => {
-    await campaign.methods.contribute().send({
-      value: "200",
-      from: accounts[1],
-    });
-    const isContributor = await campaign.methods.approvers(accounts[1]).call();
-    assert(isContributor);
-  });
-
-  it("requires a minimum contribution", async () => {
-    try {
-      await campaign.methods.contribute().send({
-        value: "5",
-        from: accounts[1],
-      });
-      assert(false);
-    } catch (err) {
-      assert(err);
-    }
-  });
-
-  it("allows a manager to create a request", async () => {
-    const manager = await campaign.methods.manager().call();
-
-    await campaign.methods.contribute().send({
-      from: manager,
-      value: web3.utils.toWei("1", "ether"),
+  describe("Campaigns", () => {
+    it("deploys a factory and a campaign", () => {
+      assert.ok(campaign.address);
+      assert.ok(factory.address);
     });
 
-    await campaign.methods
-      .createRequest("Buy batteries", web3.utils.toWei("0.5", "ether"), manager)
-      .send({
-        from: manager,
-        gas: "1000000",
-      });
-    const request = await campaign.methods.requests(0).call();
+    // it("marks caller as the campaign manager", async () => {
+    //   console.log("campaign address  = " + campaign.address);
+    //   const manager = await campaign.getManager();
+    //   console.log(manager);
+    //   //expect(deployer).to.equal(manager);
+    // })
 
-    // add additional test to check other properties on struck
-    assert.equal("Buy batteries", request.description);
-  });
+    // it("allows people to contribute money and marks them as approvers", async () => {
+    //   await campaign.methods.contribute().send({
+    //     value: "200",
+    //     from: accounts[1],
+    //   });
+    //   const isContributor = await campaign.methods.approvers(accounts[1]).call();
+    //   assert(isContributor);
+    // });
 
-  it("doesnt allow a non-manager to create a request", async () => {
-    const manager = await campaign.methods.manager().call();
+    // it("requires a minimum contribution", async () => {
+    //   try {
+    //     await campaign.methods.contribute().send({
+    //       value: "5",
+    //       from: accounts[1],
+    //     });
+    //     assert(false);
+    //   } catch (err) {
+    //     assert(err);
+    //   }
+    // });
 
-    await campaign.methods.contribute().send({
-      from: accounts[1],
-      value: web3.utils.toWei("0.1", "ether"),
-    });
+    // it("allows a manager to create a request", async () => {
+    //   const manager = await campaign.methods.manager().call();
 
-    assert.notEqual(manager, accounts[1]);
-    assert.notEqual(manager, accounts[2]);
-    assert.notEqual(manager, accounts[3]);
-  });
+    //   await campaign.methods.contribute().send({
+    //     from: manager,
+    //     value: web3.utils.toWei("1", "ether"),
+    //   });
 
-  it("processes requests", async () => {
-    await campaign.methods.contribute().send({
-      from: accounts[0],
-      value: web3.utils.toWei("10", "ether"),
-    });
+    //   await campaign.methods
+    //     .createRequest("Buy batteries", web3.utils.toWei("0.5", "ether"), manager)
+    //     .send({
+    //       from: manager,
+    //       gas: "1000000",
+    //     });
+    //   const request = await campaign.methods.requests(0).call();
 
-    await campaign.methods
-      .createRequest("A", web3.utils.toWei("5", "ether"), accounts[1])
-      .send({ from: accounts[0], gas: "1000000" });
+    //   // add additional test to check other properties on struck
+    //   assert.equal("Buy batteries", request.description);
+    // });
 
-    await campaign.methods.approveRequest(0).send({
-      from: accounts[0],
-      gas: "1000000",
-    });
+    // it("doesnt allow a non-manager to create a request", async () => {
+    //   const manager = await campaign.methods.manager().call();
 
-    await campaign.methods.finalizeRequest(0).send({
-      from: accounts[0],
-      gas: "1000000",
-    });
+    //   await campaign.methods.contribute().send({
+    //     from: accounts[1],
+    //     value: web3.utils.toWei("0.1", "ether"),
+    //   });
 
-    let balance = await web3.eth.getBalance(accounts[1]);
-    balance = web3.utils.fromWei(balance, "ether");
-    balance = parseFloat(balance);
+    //   assert.notEqual(manager, accounts[1]);
+    //   assert.notEqual(manager, accounts[2]);
+    //   assert.notEqual(manager, accounts[3]);
+    // });
 
-    // using 104 to factor in gas costs 
-    assert(balance > 104);
-  });
+    // it("processes requests", async () => {
+    //   await campaign.methods.contribute().send({
+    //     from: accounts[0],
+    //     value: web3.utils.toWei("10", "ether"),
+    //   });
 
-  it("can't create a request with amount greater than campaign balance", async () => {
-    // first need to contribute to campaign so it has a balance of 1 ether
-    await campaign.methods.contribute().send({
-      value: web3.utils.toWei("1", "ether"),
-      from: accounts[1],
-    });
+    //   await campaign.methods
+    //     .createRequest("A", web3.utils.toWei("5", "ether"), accounts[1])
+    //     .send({ from: accounts[0], gas: "1000000" });
 
-    // get campaign balance
-    const summary = await campaign.methods.getSummary().call();
-    const campaignBalance = web3.utils.fromWei(summary[1], "ether");
+    //   await campaign.methods.approveRequest(0).send({
+    //     from: accounts[0],
+    //     gas: "1000000",
+    //   });
 
-    // create request with amount greater than balance
-    const amountInRequest = 0.9; // assuming value in request was 0.9 ether
+    //   await campaign.methods.finalizeRequest(0).send({
+    //     from: accounts[0],
+    //     gas: "1000000",
+    //   });
 
-    assert(amountInRequest <= campaignBalance);
-  });
+    //   let balance = await web3.eth.getBalance(accounts[1]);
+    //   balance = web3.utils.fromWei(balance, "ether");
+    //   balance = parseFloat(balance);
 
-  it("can't create a request, approve or finalise if havent contributed", async () => {
-    const contributor = accounts[0];
+    //   // using 104 to factor in gas costs
+    //   assert(balance > 104);
+    // });
 
-    await campaign.methods.contribute().send({
-      from: contributor,
-      value: web3.utils.toWei("10", "ether"),
-    });
+    // it("can't create a request with amount greater than campaign balance", async () => {
+    //   // first need to contribute to campaign so it has a balance of 1 ether
+    //   await campaign.methods.contribute().send({
+    //     value: web3.utils.toWei("1", "ether"),
+    //     from: accounts[1],
+    //   });
 
-    const isContributor = await campaign.methods.approvers(contributor).call();
+    //   // get campaign balance
+    //   const summary = await campaign.methods.getSummary().call();
+    //   const campaignBalance = web3.utils.fromWei(summary[1], "ether");
 
-    assert(isContributor);
-    assert.notEqual(contributor, accounts[1]);
-    assert.notEqual(contributor, accounts[2]);
-    assert.notEqual(contributor, accounts[3]);
-  });
+    //   // create request with amount greater than balance
+    //   const amountInRequest = 0.9; // assuming value in request was 0.9 ether
 
-  it("can't approve request if already approved or finalise if not approved", async () => {
-    const approver = accounts[0];
+    //   assert(amountInRequest <= campaignBalance);
+    // });
 
-    await campaign.methods.contribute().send({
-      from: approver,
-      value: web3.utils.toWei("10", "ether"),
-    });
+    // it("can't create a request, approve or finalise if havent contributed", async () => {
+    //   const contributor = accounts[0];
 
-    await campaign.methods
-      .createRequest("Buy tools", web3.utils.toWei("5", "ether"), accounts[1])
-      .send({ from: approver, gas: "1000000" });
+    //   await campaign.methods.contribute().send({
+    //     from: contributor,
+    //     value: web3.utils.toWei("10", "ether"),
+    //   });
 
-    await campaign.methods.approveRequest(0).send({
-      from: approver,
-      gas: "1000000",
-    });
+    //   const isContributor = await campaign.methods.approvers(contributor).call();
 
-    const isApprover = await campaign.methods.approvers(approver).call();
-    assert.equal(isApprover, true);
-  });
+    //   assert(isContributor);
+    //   assert.notEqual(contributor, accounts[1]);
+    //   assert.notEqual(contributor, accounts[2]);
+    //   assert.notEqual(contributor, accounts[3]);
+    // });
 
-  it("can't finalise request if already finalised", async () => {
-    await campaign.methods.contribute().send({
-      from: accounts[0],
-      value: web3.utils.toWei("10", "ether"),
-    });
+    // it("can't approve request if already approved or finalise if not approved", async () => {
+    //   const approver = accounts[0];
 
-    await campaign.methods
-      .createRequest("Buy tools", web3.utils.toWei("5", "ether"), accounts[1])
-      .send({ from: accounts[0], gas: "1000000" });
+    //   await campaign.methods.contribute().send({
+    //     from: approver,
+    //     value: web3.utils.toWei("10", "ether"),
+    //   });
 
-    await campaign.methods.approveRequest(0).send({
-      from: accounts[0],
-      gas: "1000000",
-    });
+    //   await campaign.methods
+    //     .createRequest("Buy tools", web3.utils.toWei("5", "ether"), accounts[1])
+    //     .send({ from: approver, gas: "1000000" });
 
-    await campaign.methods.finalizeRequest(0).send({
-      from: accounts[0],
-      gas: "1000000",
-    });
+    //   await campaign.methods.approveRequest(0).send({
+    //     from: approver,
+    //     gas: "1000000",
+    //   });
 
-    const requestCount = await campaign.methods.getRequestCount().call();
+    //   const isApprover = await campaign.methods.approvers(approver).call();
+    //   assert.equal(isApprover, true);
+    // });
 
-    const requests = await Promise.all(
-      Array(parseInt(requestCount))
-        .fill()
-        .map((element, index) => {
-          return campaign.methods.requests(index).call();
-        })
-    );
+    // it("can't finalise request if already finalised", async () => {
+    //   await campaign.methods.contribute().send({
+    //     from: accounts[0],
+    //     value: web3.utils.toWei("10", "ether"),
+    //   });
 
-    assert.equal(requests[0].complete, true);
-  });
+    //   await campaign.methods
+    //     .createRequest("Buy tools", web3.utils.toWei("5", "ether"), accounts[1])
+    //     .send({ from: accounts[0], gas: "1000000" });
 
-  it("allows a manager to finalise a request", async () => {
-    const manager = await campaign.methods.manager().call();
+    //   await campaign.methods.approveRequest(0).send({
+    //     from: accounts[0],
+    //     gas: "1000000",
+    //   });
 
-    await campaign.methods.contribute().send({
-      from: accounts[1],
-      value: web3.utils.toWei("5", "ether"),
-    });
+    //   await campaign.methods.finalizeRequest(0).send({
+    //     from: accounts[0],
+    //     gas: "1000000",
+    //   });
 
-    await campaign.methods.contribute().send({
-      from: accounts[2],
-      value: web3.utils.toWei("5", "ether"),
-    });
+    //   const requestCount = await campaign.methods.getRequestCount().call();
 
-    // get campaign balance
-    const summary = await campaign.methods.getSummary().call();
-    const campaignBalance = web3.utils.fromWei(summary[1], "ether");
+    //   const requests = await Promise.all(
+    //     Array(parseInt(requestCount))
+    //       .fill()
+    //       .map((element, index) => {
+    //         return campaign.methods.requests(index).call();
+    //       })
+    //   );
 
-    await campaign.methods
-      .createRequest("Buy tools", web3.utils.toWei("5", "ether"), manager)
-      .send({ from: manager, gas: "1000000" });
+    //   assert.equal(requests[0].complete, true);
+    // });
 
-    // make sure 2 people have approved - i.e. > 50%
-    await campaign.methods.approveRequest(0).send({
-      from: accounts[1],
-      gas: "1000000",
-    });
+    // it("allows a manager to finalise a request", async () => {
+    //   const manager = await campaign.methods.manager().call();
 
-    await campaign.methods.approveRequest(0).send({
-      from: accounts[2],
-      gas: "1000000",
-    });
+    //   await campaign.methods.contribute().send({
+    //     from: accounts[1],
+    //     value: web3.utils.toWei("5", "ether"),
+    //   });
 
-    await campaign.methods.finalizeRequest(0).send({
-      from: manager,
-      gas: "1000000",
-    });
+    //   await campaign.methods.contribute().send({
+    //     from: accounts[2],
+    //     value: web3.utils.toWei("5", "ether"),
+    //   });
 
-    const requestCount = await campaign.methods.getRequestCount().call();
+    //   // get campaign balance
+    //   const summary = await campaign.methods.getSummary().call();
+    //   const campaignBalance = web3.utils.fromWei(summary[1], "ether");
 
-    const requests = await Promise.all(
-      Array(parseInt(requestCount))
-        .fill()
-        .map((element, index) => {
-          return campaign.methods.requests(index).call();
-        })
-    );
+    //   await campaign.methods
+    //     .createRequest("Buy tools", web3.utils.toWei("5", "ether"), manager)
+    //     .send({ from: manager, gas: "1000000" });
 
-    assert.equal(requests[0].complete, true);
+    //   // make sure 2 people have approved - i.e. > 50%
+    //   await campaign.methods.approveRequest(0).send({
+    //     from: accounts[1],
+    //     gas: "1000000",
+    //   });
+
+    //   await campaign.methods.approveRequest(0).send({
+    //     from: accounts[2],
+    //     gas: "1000000",
+    //   });
+
+    //   await campaign.methods.finalizeRequest(0).send({
+    //     from: manager,
+    //     gas: "1000000",
+    //   });
+
+    //   const requestCount = await campaign.methods.getRequestCount().call();
+
+    //   const requests = await Promise.all(
+    //     Array(parseInt(requestCount))
+    //       .fill()
+    //       .map((element, index) => {
+    //         return campaign.methods.requests(index).call();
+    //       })
+    //   );
+
+    //   assert.equal(requests[0].complete, true);
+    // });
   });
 });
 

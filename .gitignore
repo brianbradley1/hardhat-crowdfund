@@ -99,3 +99,6 @@ lint/tmp/
 # lint/reports/
 
 gas-report.txt
+
+# custom
+ProjectNotes.txt
