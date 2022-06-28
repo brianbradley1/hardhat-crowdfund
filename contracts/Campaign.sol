@@ -1,76 +1,62 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.9;
 
-// used to deploy instances of the 'Campaign' contract
-contract CampaignFactory {
-    address payable[] public deployedCampaigns;
-
-    function createCampaign(uint256 minimum) public {
-        // need to pass in msg.sender to make sure manager set to correct address
-        address newCampaign = address(new Campaign(minimum, msg.sender));
-        deployedCampaigns.push(payable(newCampaign));
-    }
-
-    function getDeployedCampaigns()
-        public
-        view
-        returns (address payable[] memory)
-    {
-        return deployedCampaigns;
-    }
-}
+error Campaign__OnlyManager();
+error Campaign__ContributionLessThanMinimum();
+error Campaign__ReqAmountGreaterThanCampaignBalance();
+error Campaign__NotAContributor();
+error Campaign__AlreadyApproved();
+error Campaign__NotEnoughApprovals();
+error Campaign__RequestAlreadyComplete();
+error Campaign__TransferFailed();
 
 contract Campaign {
-    // only declaration - cant instantiate
-    // use capital when defining a struct
     struct Request {
         string description;
         uint256 value;
-        address recipient;
+        address payable recipient;
         bool complete;
         uint256 approvalCount;
         mapping(address => bool) approvals;
     }
 
-    uint256 numRequests;
-    mapping(uint256 => Request) public requests;
+    // Campaign Variables
+    address private immutable i_manager;
+    uint256 private immutable i_minimumContribution;
+    uint256 private s_numRequests;
+    uint256 private s_approversCount;
+    mapping(uint256 => Request) private s_requests;
+    mapping(address => bool) private s_approvers;
 
-    address public manager;
-    uint256 public minimumContribution;
-    mapping(address => bool) public approvers;
-    uint256 public approversCount;
-
-    modifier restricted() {
-        require(msg.sender == manager);
-        _;
-    }
-
+    /* Functions */
     constructor(uint256 minimum, address creator) {
-        manager = creator;
-        minimumContribution = minimum;
+        i_manager = creator;
+        i_minimumContribution = minimum;
     }
 
     function contribute() public payable {
-        require(msg.value > minimumContribution);
+        if (msg.value < i_minimumContribution)
+            revert Campaign__ContributionLessThanMinimum();
 
         // add check to make sure doesn't increment approver twice for same address
-        if (approvers[msg.sender] == false) {
-            approversCount++;
-            approvers[msg.sender] = true;
+        if (s_approvers[msg.sender] == false) {
+            s_approversCount++;
+            s_approvers[msg.sender] = true;
         }
     }
 
     function createRequest(
         string memory _description,
         uint256 _value,
-        address _recipient
-    ) public payable restricted {
-        // make sure requested value is less than campaign balance
-        require(_value <= (address(this).balance));
+        address payable _recipient
+    ) public payable onlyManager {
+        // make sure requested value is not greater than campaign balance
+        if (_value > (address(this).balance))
+            revert Campaign__ReqAmountGreaterThanCampaignBalance();
 
         // Since v0.7.1 - if struct contains a mapping, it can be only used in storage
         // Previously mappings were silently skipped in memory - confusing and error prone
-        Request storage r = requests[numRequests++];
+        Request storage r = s_requests[s_numRequests++];
         r.description = _description;
         r.value = _value;
         r.recipient = _recipient;
@@ -80,13 +66,13 @@ contract Campaign {
 
     // each contributor should be able to call this request
     function approveRequest(uint256 index) public payable {
-        Request storage request = requests[index];
+        Request storage request = s_requests[index];
 
-        // make sure caller has contributed
-        require(approvers[msg.sender]);
+        // make sure caller has not already contributed
+        if (!s_approvers[msg.sender]) revert Campaign__NotAContributor();
 
         // make sure contributor has not already approved this request - if so kick out
-        require(!request.approvals[msg.sender]);
+        if (request.approvals[msg.sender]) revert Campaign__AlreadyApproved();
 
         // increment approval count
         request.approvalCount++;
@@ -94,40 +80,58 @@ contract Campaign {
         request.approvals[msg.sender] = true;
     }
 
-    function finalizeRequest(uint256 index) public restricted {
-        Request storage request = requests[index];
+    function finalizeRequest(uint256 index) public onlyManager {
+        Request storage request = s_requests[index];
 
         // check at least 50% of people have approved request before finalizing
-        require(request.approvalCount > (approversCount / 2));
+        if (request.approvalCount < (s_approversCount / 2))
+            revert Campaign__NotEnoughApprovals();
         // check request has not already been approved
-        require(!request.complete);
+        if (request.complete) revert Campaign__RequestAlreadyComplete();
 
-        // send me to requestor who will be the manager
-        payable(request.recipient).transfer(request.value);
+        // send value to requestor who will be the manager
+        //payable(request.recipient).transfer(request.value);
+
+        address payable requestRecipient = request.recipient;
+        (bool success, ) = requestRecipient.call{value: request.value}("");
+        if (!success) {
+            revert Campaign__TransferFailed();
+        }
         request.complete = true;
     }
 
-    function getSummary()
-        public
-        view
-        returns (
-            uint256,
-            uint256,
-            uint256,
-            uint256,
-            address
-        )
-    {
-        return (
-            minimumContribution,
-            (address(this).balance),
-            numRequests,
-            approversCount,
-            manager
-        );
+    /** Getter Functions */
+    function getRequestCount() public view returns (uint256) {
+        return s_numRequests;
     }
 
-    function getRequestCount() public view returns (uint256) {
-        return numRequests;
+    function getMinimumContribution() public view returns (uint256) {
+        return i_minimumContribution;
+    }
+
+    function getNumRequests() public view returns (uint256) {
+        return s_numRequests;
+    }
+
+    // function getRequestor(uint256 index) public view returns (Request) {
+    //     return s_numRequests[index];
+    // }
+
+    function getNumApprovers() public view returns (uint256) {
+        return s_approversCount;
+    }
+
+    function getApprover(address approver) public view returns (bool) {
+        return s_approvers[approver];
+    }
+
+    function getManager() public view returns (address) {
+        return i_manager;
+    }
+
+    /* Modifiers */
+    modifier onlyManager() {
+        if (msg.sender != i_manager) revert Campaign__OnlyManager();
+        _;
     }
 }
