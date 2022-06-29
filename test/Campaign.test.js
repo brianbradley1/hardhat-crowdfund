@@ -1,11 +1,13 @@
 const { assert, expect } = require("chai");
 const { getNamedAccounts, deployments, ethers, network } = require("hardhat");
-const { abi: campaignAbi } = require("../artifacts/contracts/Campaign.sol/Campaign.json");
 
-let factory, campaignAddress, campaign, deployer, user1, user2;
+let factory, campaignAddress, campaign, deployer, user1, owner, spender, holder;
 
 describe("Campaign Unit Test", function () {
   beforeEach(async () => {
+    // owner = deployer
+    [owner, spender, holder] = await ethers.getSigners();
+
     const { deploy } = deployments;
     const accounts = await getNamedAccounts();
     deployer = accounts.deployer;
@@ -20,8 +22,8 @@ describe("Campaign Unit Test", function () {
     // create first campaign for testing
     await factory.createCampaign(minimumFee);
     [campaignAddress] = await factory.getDeployedCampaigns();
-
-    campaign = new ethers.Contract(campaignAddress, campaignAbi);
+    
+    campaign = await ethers.getContractAt("Campaign", campaignAddress);
   });
 
   describe("Campaigns", () => {
@@ -30,21 +32,16 @@ describe("Campaign Unit Test", function () {
       assert.ok(factory.address);
     });
 
-    // it("marks caller as the campaign manager", async () => {
-    //   console.log("campaign address  = " + campaign.address);
-    //   const manager = await campaign.getManager();
-    //   console.log(manager);
-    //   //expect(deployer).to.equal(manager);
-    // })
+    it("marks caller as the campaign manager", async () => {
+      const manager = await campaign.getManager();
+      expect(deployer).to.equal(manager);
+    });
 
-    // it("allows people to contribute money and marks them as approvers", async () => {
-    //   await campaign.methods.contribute().send({
-    //     value: "200",
-    //     from: accounts[1],
-    //   });
-    //   const isContributor = await campaign.methods.approvers(accounts[1]).call();
-    //   assert(isContributor);
-    // });
+    it("allows people to contribute money and marks them as approvers", async () => {
+      await campaign.connect(holder).contribute({ value: ethers.utils.parseEther("200")});
+      const isContributor = await campaign.getApprover(holder.address);
+      assert(isContributor);
+    });
 
     // it("requires a minimum contribution", async () => {
     //   try {
