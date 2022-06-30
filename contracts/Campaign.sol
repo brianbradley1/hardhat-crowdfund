@@ -9,6 +9,7 @@ error Campaign__AlreadyApproved();
 error Campaign__NotEnoughApprovals();
 error Campaign__RequestAlreadyComplete();
 error Campaign__TransferFailed();
+error Campaign__RequestDoesNotExist();
 
 contract Campaign {
     struct Request {
@@ -68,7 +69,11 @@ contract Campaign {
     function approveRequest(uint256 index) public payable {
         Request storage request = s_requests[index];
 
-        // make sure caller has not already contributed
+        // check to make sure request exists before finalizing request
+        if (request.recipient == address(0x0))
+            revert Campaign__RequestDoesNotExist();
+
+        // make sure caller is a contributor
         if (!s_approvers[msg.sender]) revert Campaign__NotAContributor();
 
         // make sure contributor has not already approved this request - if so kick out
@@ -83,15 +88,17 @@ contract Campaign {
     function finalizeRequest(uint256 index) public onlyManager {
         Request storage request = s_requests[index];
 
+        // check to make sure request exists before finalizing request
+        if (request.recipient == address(0x0))
+            revert Campaign__RequestDoesNotExist();
+
         // check at least 50% of people have approved request before finalizing
         if (request.approvalCount < (s_approversCount / 2))
             revert Campaign__NotEnoughApprovals();
         // check request has not already been approved
         if (request.complete) revert Campaign__RequestAlreadyComplete();
 
-        // send value to requestor who will be the manager
-        //payable(request.recipient).transfer(request.value);
-
+        // send value to recipient who will be the manager
         address payable requestRecipient = request.recipient;
         (bool success, ) = requestRecipient.call{value: request.value}("");
         if (!success) {
@@ -107,10 +114,6 @@ contract Campaign {
 
     function getMinimumContribution() public view returns (uint256) {
         return i_minimumContribution;
-    }
-
-    function getNumRequests() public view returns (uint256) {
-        return s_numRequests;
     }
 
     // function getRequestor(uint256 index) public view returns (Request) {
