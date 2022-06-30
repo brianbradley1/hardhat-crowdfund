@@ -1,5 +1,6 @@
 const { assert, expect } = require("chai");
-const { getNamedAccounts, deployments, ethers, network } = require("hardhat");
+const hre = require("hardhat");
+const { getNamedAccounts, deployments, ethers } = require("hardhat");
 
 let factory,
   campaignAddress,
@@ -10,10 +11,14 @@ let factory,
   account3,
   account4,
   account5,
-  account6;
+  account6,
+  minimumFee;
 
 describe("Campaign Unit Test", function () {
   beforeEach(async () => {
+    // reset state
+    //await hre.network.provider.send("hardhat_reset");
+
     // owner/manager = deployer
     // A Signer = object that represents an Ethereum account.
     // It's used to send transactions to contracts and other accounts
@@ -28,24 +33,32 @@ describe("Campaign Unit Test", function () {
     await deployments.fixture(["campaignFactory"]);
     factory = await ethers.getContract("CampaignFactory", deployer);
 
-    const minimumFee = ethers.utils.parseEther("100");
+    minimumFee = ethers.utils.parseEther("100");
     // create first campaign for testing
     await factory.createCampaign(minimumFee);
     [campaignAddress] = await factory.getDeployedCampaigns();
 
     campaign = await ethers.getContractAt("Campaign", campaignAddress);
     manager = await campaign.getManager();
+
+    //const deployedContracts = await factory.getDeployedCampaigns();
+    //console.log(deployedContracts);
   });
 
   describe("Campaigns", () => {
     describe("Initial checks", () => {
-      it("deploys a factory and a campaign", () => {
+      it("deploys a factory and a campaign", async () => {
         assert.ok(campaign.address);
         assert.ok(factory.address);
       });
 
       it("marks caller as the campaign manager", async () => {
         expect(deployer).to.equal(manager);
+      });
+
+      it("minimum fee on the campaign was set correctly", async () => {
+        const contractMinimumFee = await campaign.getMinimumContribution();
+        expect(minimumFee).to.equal(contractMinimumFee);
       });
     });
 
@@ -144,20 +157,16 @@ describe("Campaign Unit Test", function () {
           campaign.connect(account2).approveRequest(0)
         ).to.be.revertedWith("Campaign__NotAContributor");
       });
+
+      it("reverts if approve request with record that doesnt exist", async () => {
+        await expect(campaign.connect(account2).approveRequest(10)).to.be.revertedWith(
+          "Campaign__RequestDoesNotExist"
+        );
+      });
     });
 
     describe("finalise", () => {
       beforeEach(async () => {
-        //const approvalCountBefore = await campaign.getNumApprovers();
-        //console.log(approvalCountBefore.toNumber());
-        // reset state
-        // await network.provider.request({
-        //   method: "hardhat_reset",
-        //   params: [],
-        // });
-        //const approvalCountAfter = await campaign.getNumApprovers();
-        //console.log(approvalCountAfter.toNumber());
-
         // contribute and create request before each approval test
         await campaign
           .connect(account2)
@@ -168,13 +177,33 @@ describe("Campaign Unit Test", function () {
           ethers.utils.parseEther("50"),
           manager
         );
+
+        //console.log("before finalise");
       });
-      it("can finalise request", async () => {
+
+      it("manager can finalise request", async () => {
         await campaign.connect(account2).approveRequest(0);
         await campaign.finalizeRequest(0);
       });
 
+      it("reverts if non-manager tries to finalise request", async () => {
+        await campaign.connect(account2).approveRequest(0);
+        await expect(campaign.connect(account2).finalizeRequest(0)).to.be.revertedWith(
+          "Campaign__OnlyManager"
+        );
+      });
+
+      it("reverts if finalise request with record that doesnt exist", async () => {
+        await campaign.connect(account2).approveRequest(0);
+        await expect(campaign.finalizeRequest(10)).to.be.revertedWith(
+          "Campaign__RequestDoesNotExist"
+        );
+      });
+
       it("reverts when not enough approvals to finalize a request", async () => {
+        //const approvalCountBefore = await campaign.getNumApprovers();
+        //console.log(approvalCountBefore.toNumber());
+
         await campaign
           .connect(account3)
           .contribute({ value: ethers.utils.parseEther("100") });
@@ -189,119 +218,11 @@ describe("Campaign Unit Test", function () {
 
         await campaign.connect(account2).approveRequest(0);
 
-        const approvalCount = await campaign.getNumApprovers();
-        assert(approvalCount.toNumber() > 0);
-
         await expect(campaign.finalizeRequest(0)).to.be.revertedWith(
           "Campaign__NotEnoughApprovals"
         );
       });
-
-      //   await campaign.methods
-      //     .createRequest("Buy tools", web3.utils.toWei("5", "ether"), accounts[1])
-      //     .send({ from: accounts[0], gas: "1000000" });
-
-      //   await campaign.methods.approveRequest(0).send({
-      //     from: accounts[0],
-      //     gas: "1000000",
-      //   });
-
-      //   await campaign.methods.finalizeRequest(0).send({
-      //     from: accounts[0],
-      //     gas: "1000000",
-      //   });
-
-      //   const requestCount = await campaign.methods.getRequestCount().call();
-
-      //   const requests = await Promise.all(
-      //     Array(parseInt(requestCount))
-      //       .fill()
-      //       .map((element, index) => {
-      //         return campaign.methods.requests(index).call();
-      //       })
-      //   );
-
-      //   assert.equal(requests[0].complete, true);
-      // });
-
-      // it("allows a manager to finalise a request", async () => {
-      //   const manager = await campaign.methods.manager().call();
-
-      //   await campaign.methods.contribute().send({
-      //     from: accounts[1],
-      //     value: web3.utils.toWei("5", "ether"),
-      //   });
-
-      //   await campaign.methods.contribute().send({
-      //     from: accounts[2],
-      //     value: web3.utils.toWei("5", "ether"),
-      //   });
-
-      //   // get campaign balance
-      //   const summary = await campaign.methods.getSummary().call();
-      //   const campaignBalance = web3.utils.fromWei(summary[1], "ether");
-
-      //   await campaign.methods
-      //     .createRequest("Buy tools", web3.utils.toWei("5", "ether"), manager)
-      //     .send({ from: manager, gas: "1000000" });
-
-      //   // make sure 2 people have approved - i.e. > 50%
-      //   await campaign.methods.approveRequest(0).send({
-      //     from: accounts[1],
-      //     gas: "1000000",
-      //   });
-
-      //   await campaign.methods.approveRequest(0).send({
-      //     from: accounts[2],
-      //     gas: "1000000",
-      //   });
-
-      //   await campaign.methods.finalizeRequest(0).send({
-      //     from: manager,
-      //     gas: "1000000",
-      //   });
-
-      //   const requestCount = await campaign.methods.getRequestCount().call();
-
-      //   const requests = await Promise.all(
-      //     Array(parseInt(requestCount))
-      //       .fill()
-      //       .map((element, index) => {
-      //         return campaign.methods.requests(index).call();
-      //       })
-      //   );
-
-      //   assert.equal(requests[0].complete, true);
-      // });
     });
   });
 });
 // reset balances between each test? - come back to this
-
-// it("Can complete request end to end process", async () => {
-//   await campaign
-//     .connect(account3)
-//     .contribute({ value: ethers.utils.parseEther("100") });
-
-//   await campaign.createRequest(
-//     "Buy batteries",
-//     ethers.utils.parseEther("50"),
-//     manager
-//   );
-
-//   await campaign.approveRequest(0).send({
-//     from: accounts[0],
-//     gas: "1000000",
-//   });
-
-//   await campaign.methods.finalizeRequest(0).send({
-//     from: accounts[0],
-//     gas: "1000000",
-//   });
-
-//   let balance = await web3.eth.getBalance(accounts[1]);
-//   balance = web3.utils.fromWei(balance, "ether");
-//   balance = parseFloat(balance);
-
-//   // using 104 to factor in gas costs
-//   assert(balance > 104);
