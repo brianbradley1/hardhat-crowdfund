@@ -2,6 +2,7 @@
 pragma solidity ^0.8.9;
 
 error Campaign__OnlyManager();
+error Campaign__ManagerCannotBeAContributor();
 error Campaign__ContributionLessThanMinimum();
 error Campaign__ReqAmountGreaterThanCampaignBalance();
 error Campaign__NotAContributor();
@@ -38,6 +39,9 @@ contract Campaign {
     function contribute() public payable {
         if (msg.value < i_minimumContribution)
             revert Campaign__ContributionLessThanMinimum();
+        
+        if (msg.sender == i_manager)
+            revert Campaign__ManagerCannotBeAContributor();
 
         // add check to make sure doesn't increment approver twice for same address
         if (s_approvers[msg.sender] == false) {
@@ -112,13 +116,30 @@ contract Campaign {
         return s_numRequests;
     }
 
+    function getRequest(uint256 index)
+        public
+        view
+        returns (
+            string memory,
+            uint256,
+            address,
+            bool,
+            uint256
+        )
+    {
+        Request storage request = s_requests[index];
+        return (
+            request.description,
+            request.value,
+            request.recipient,
+            request.complete,
+            request.approvalCount
+        );
+    }
+
     function getMinimumContribution() public view returns (uint256) {
         return i_minimumContribution;
     }
-
-    // function getRequestor(uint256 index) public view returns (Request) {
-    //     return s_numRequests[index];
-    // }
 
     function getNumApprovers() public view returns (uint256) {
         return s_approversCount;
@@ -130,6 +151,10 @@ contract Campaign {
 
     function getManager() public view returns (address) {
         return i_manager;
+    }
+
+    function getBalance() public view returns (uint256) {
+        return address(this).balance;
     }
 
     /* Modifiers */
