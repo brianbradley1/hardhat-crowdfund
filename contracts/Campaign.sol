@@ -5,12 +5,15 @@ error Campaign__OnlyManager();
 error Campaign__ManagerCannotBeAContributor();
 error Campaign__ContributionLessThanMinimum();
 error Campaign__ReqAmountGreaterThanCampaignBalance();
+error Campaign__ReqAmountNotGreaterThanZero();
 error Campaign__NotAContributor();
 error Campaign__AlreadyApproved();
 error Campaign__NotEnoughApprovals();
 error Campaign__RequestAlreadyComplete();
 error Campaign__TransferFailed();
 error Campaign__RequestDoesNotExist();
+
+import "hardhat/console.sol";
 
 contract Campaign {
     struct Request {
@@ -59,6 +62,9 @@ contract Campaign {
         if (_value > (address(this).balance))
             revert Campaign__ReqAmountGreaterThanCampaignBalance();
 
+        if (_value <= 0)
+            revert Campaign__ReqAmountNotGreaterThanZero();
+
         // Since v0.7.1 - if struct contains a mapping, it can be only used in storage
         // Previously mappings were silently skipped in memory - confusing and error prone
         Request storage r = s_requests[s_numRequests++];
@@ -97,10 +103,15 @@ contract Campaign {
             revert Campaign__RequestDoesNotExist();
 
         // check at least 50% of people have approved request before finalizing
-        if (request.approvalCount < (s_approversCount / 2))
+        if (!(request.approvalCount > (s_approversCount / 2)))
             revert Campaign__NotEnoughApprovals();
+
         // check request has not already been approved
         if (request.complete) revert Campaign__RequestAlreadyComplete();
+
+        // make sure requested value is not greater than campaign balance
+        if (request.value > (address(this).balance))
+            revert Campaign__ReqAmountGreaterThanCampaignBalance();
 
         // send value to recipient who will be the manager
         address payable requestRecipient = request.recipient;
